@@ -8,17 +8,20 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from graphrag.config import settings
 
-_EXTRACTION_PROMPT = """Extract key entity relationships from this paper's title and abstract, \
-for building a knowledge graph that connects papers addressing similar sub-problems, so a \
-multi-hop question spanning two papers can be answered by traversing shared entities.
+_EXTRACTION_PROMPT = """Extract key entity relationships from this paper's title, abstract, and \
+opening sections, for building a knowledge graph that connects papers addressing similar \
+sub-problems, so a multi-hop question spanning two papers can be answered by traversing shared \
+entities.
 
 Title: {title}
 Abstract: {abstract}
-
+{extra_context_section}
 Extract two kinds of triples:
 
-1. 5-9 triples about this paper's own contribution: methods/systems named in this paper, what \
-they do, what they improve on or compare against, datasets/benchmarks used, key claimed results. \
+1. 8-14 triples about this paper's own contribution: methods/systems named in this paper, what \
+they do, what they improve on or compare against, datasets/benchmarks used, key claimed results, \
+and — since you now have more than just the abstract — specific mechanisms, sub-components, or \
+named comparisons mentioned in the opening sections that the abstract alone doesn't capture. \
 Use short entity names (proper nouns, method/system names, dataset names), not full sentences. \
 Every "source" and "target" value MUST be under 8 words — never a full sentence or clause. If a \
 claimed result needs more detail than that, shorten it (e.g. "83.3% attack success rate", not a \
@@ -57,24 +60,38 @@ def _call_llm(client: Groq, prompt: str) -> str:
         model=settings.groq_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
-        max_tokens=3072,
+        max_tokens=4096,
     )
     return response.choices[0].message.content.strip()
 
 
 def extract_triples(
-    arxiv_id: str, title: str, abstract: str, client: Groq | None = None
+    arxiv_id: str,
+    title: str,
+    abstract: str,
+    client: Groq | None = None,
+    extra_context: str = "",
 ) -> list[RawTriple]:
-    """Extracts (subject, relation, object) triples from a paper's abstract.
+    """Extracts (subject, relation, object) triples from a paper's abstract, plus
+    optional additional body text (extra_context) for richer coverage.
 
-    Scoped to abstracts only, not the ~2000 full-text chunks: that's where the
-    hand-labeled eval questions get their gold facts from, and it keeps this at
-    90 LLM calls instead of ~2000. Extracting from full text is a stretch goal
-    alongside growing the eval set, not a v1 requirement.
+    v1 was abstract-only (90 calls, ~9 triples/paper -> 1578 edges total). That
+    graph turned out too sparse: for the hand-labeled eval questions, neither the
+    discrete entity graph nor the subtopic-embedding bridge reliably connected the
+    actual correct paper pairs (see eval/README.md "Day 2 graph density" note).
+    Passing the first couple of body chunks as extra_context roughly doubles input
+    per call and should surface entities the abstract's compressed summary omits.
+    All triples are still attributed to the paper's `#abstract` chunk id (not the
+    literal body chunk they came from) — hybrid_retrieval anchors graph lookups on
+    the paper-level abstract id regardless of which chunk was vector-matched, so
+    per-triple chunk provenance isn't needed for this purpose.
     """
     client = client or Groq(api_key=settings.groq_api_key)
     title_short = title if len(title) <= 60 else title[:57] + "..."
-    prompt = _EXTRACTION_PROMPT.format(title=title, title_short=title_short, abstract=abstract)
+    extra_context_section = f"Additional excerpt: {extra_context}\n" if extra_context else ""
+    prompt = _EXTRACTION_PROMPT.format(
+        title=title, title_short=title_short, abstract=abstract, extra_context_section=extra_context_section
+    )
 
     try:
         content = _call_llm(client, prompt)

@@ -39,6 +39,42 @@ without using its system name/title, so retrieval has to work from the underlyin
 semantic content instead of a lexical shortcut. All 8 questions were rewritten under this
 rule; gold answers still name the actual system so grading remains checkable.
 
+## Day 2 graph density (resolved 2026-07-22)
+
+First hybrid-vs-flat run: identical numbers on every question. Root cause was
+abstract-only extraction (~9 triples/paper, 1578 edges) — too sparse to guarantee a
+graph or subtopic-embedding bridge existed between any given correct pair. Confirmed by
+direct check: neither `neighbor_chunk_ids` nor `subtopic_bridge_chunk_ids` connected
+D-NOVA to Debate-on-Graph (q7) or DeLIVeR to C2KV (q8) at all.
+
+Fix: extraction now includes each paper's first 2 body chunks alongside the abstract
+(see `extract.py`, `pipeline.py:_body_excerpt`), producing ~13-23 triples/paper. Re-ran
+the full corpus (80/90 papers with edges, 1483 edges, 10 papers hit persistent
+LLM over-generation failures even at max_tokens=4096 — accepted as a known small gap,
+same as Day 1/2's earlier extraction runs).
+
+Result: **hybrid recall (56.25%) now beats flat baseline (43.75%)**, with q1 and q2 each
+going from 0.50 to 1.00 recall — hybrid found both gold papers where flat found only one
+— and zero regressions on any question. Precision is still lower for hybrid (37.5% vs
+50%) since expansion candidates that aren't hits dilute it; recall is the metric that
+matters for "did retrieval find the needed evidence at all," which is what multi-hop QA
+is actually testing.
+
+Not fully solved: q4-q8 remain ties (q7/q8 still find neither gold paper for either
+system). More body-chunk coverage per paper, or extracting from full papers rather than
+abstract + 2 chunks, would likely close more of these — noted as a stretch item.
+
+**Groq model/quota notes for future extraction runs:** `llama-3.3-70b-versatile` has a
+much lower daily token budget (100,000 TPD) than its per-minute limit (12,000 TPM)
+suggests — the richer abstract+body-chunk prompt (~3000-3500 tokens/call) exhausts the
+whole daily budget after ~33 calls, not from bursty pacing but from cumulative daily
+usage. `llama-3.1-8b-instant` has a separate, much larger quota bucket (14,400 RPD) and
+a smaller per-minute cap (6,000 TPM vs 12,000) — with this richer prompt it needs ~40s
+between calls, not 10s (10s was fine for the abstract-only prompt, which used ~4x fewer
+tokens/call). A handful of papers cause either model to loop/over-generate regardless of
+token ceiling — not fixable by raising max_tokens further; shortening the input excerpt
+sometimes helps (worked for Debate-on-Graph specifically).
+
 ## Scoring granularity
 
 `precision_at_k`/`recall_at_k` (`src/graphrag/eval/scoring.py`) score at the **paper**

@@ -12,12 +12,24 @@ from graphrag.graph.store import EdgeRecord, create_graph_schema, insert_edges, 
 from graphrag.ingestion.store import get_connection
 
 
-def run_extraction(politeness_delay_s: float = 10.0, arxiv_ids: list[str] | None = None) -> None:
-    # Groq free tier caps llama-3.3-70b-versatile at 12,000 tokens/minute
-    # (x-ratelimit-limit-tokens header). This prompt + response runs ~1500-2000
-    # tokens/call, so 3s pacing still blew through the TPM budget after a few
-    # calls. 10s keeps us at ~6 calls/min, comfortably under the cap. At that
-    # pace, 90 papers takes ~15 min — longer than a single tool call budget, so
+def _body_excerpt(conn, arxiv_id: str, n_chunks: int = 2, max_chars: int = 3000) -> str:
+    rows = conn.execute(
+        "SELECT text FROM chunks WHERE arxiv_id = %s AND chunk_index BETWEEN 1 AND %s ORDER BY chunk_index",
+        (arxiv_id, n_chunks),
+    ).fetchall()
+    excerpt = " ".join(r[0] for r in rows)
+    return excerpt[:max_chars]
+
+
+def run_extraction(politeness_delay_s: float = 18.0, arxiv_ids: list[str] | None = None) -> None:
+    # v2: abstract + first 2 body chunks per paper (see extract.py docstring for why
+    # abstract-only proved too sparse). That roughly triples input tokens per call,
+    # so pacing must be more conservative than the v1 abstract-only run. Groq's
+    # llama-3.3-70b-versatile caps at 12,000 tokens/minute; a ~3000-3500 token call
+    # (prompt + completion) allows ~3.4 calls/min, so 18s keeps real margin rather
+    # than sitting right at the edge (v1 learned the hard way that sitting at the
+    # edge means occasional slow calls cascade into rate-limit failures). At that
+    # pace, 90 papers takes ~27 min — longer than a single tool call budget, so
     # this function is resumable: pass arxiv_ids to process one batch at a time,
     # entities/edges are written after every paper (not only at the end), and
     # entity ids are content-addressed (see EntityDeduper) so batches never
@@ -36,7 +48,7 @@ def run_extraction(politeness_delay_s: float = 10.0, arxiv_ids: list[str] | None
         papers = conn.execute(
             "SELECT arxiv_id, title, abstract FROM papers ORDER BY arxiv_id"
         ).fetchall()
-    print(f"Extracting entities/relations from {len(papers)} paper abstracts...")
+    print(f"Extracting entities/relations from {len(papers)} papers (abstract + body excerpt)...")
 
     client = Groq(api_key=settings.groq_api_key)
     embedding_model = SentenceTransformer(settings.embedding_model)
@@ -52,7 +64,8 @@ def run_extraction(politeness_delay_s: float = 10.0, arxiv_ids: list[str] | None
     already_persisted: set[str] = set()
 
     for i, (arxiv_id, title, abstract) in enumerate(papers, 1):
-        triples = extract_triples(arxiv_id, title, abstract, client=client)
+        extra_context = _body_excerpt(conn, arxiv_id)
+        triples = extract_triples(arxiv_id, title, abstract, client=client, extra_context=extra_context)
         if not triples:
             n_failed += 1
         n_raw_triples += len(triples)
