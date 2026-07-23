@@ -16,6 +16,13 @@ class LabeledQuestion(BaseModel):
     notes: str | None = None
 
 
+class Citation(BaseModel):
+    """One claim in a synthesized answer and the chunk ids that support it."""
+
+    claim: str
+    chunk_ids: list[str]
+
+
 class PredictionResult(BaseModel):
     """What a system under test returns for one question."""
 
@@ -24,6 +31,9 @@ class PredictionResult(BaseModel):
     retrieved_chunk_ids: list[str]
     """Ranked, most relevant first. The harness slices to top-k itself."""
     latency_ms: float
+    citations: list[Citation] = []
+    """Populated only by systems that do grounded synthesis (see systems/synthesis.py).
+    Empty for systems that just extract a placeholder answer from the top chunk."""
 
 
 class QuestionScore(BaseModel):

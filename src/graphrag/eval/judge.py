@@ -64,10 +64,15 @@ class LLMJudge(AnswerJudge):
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
+            max_tokens=200,
         )
         content = response.choices[0].message.content.strip()
+        if content.startswith("```"):
+            content = "\n".join(line for line in content.splitlines() if not line.strip().startswith("```"))
         try:
-            parsed = json.loads(content)
+            # Same robustness lesson as extract.py/synthesis.py: raw_decode tolerates
+            # trailing text after the JSON object instead of failing the whole parse.
+            parsed, _ = json.JSONDecoder().raw_decode(content.strip())
             return bool(parsed["correct"]), str(parsed.get("reasoning", ""))
         except (json.JSONDecodeError, KeyError):
             return False, f"judge returned unparseable response: {content!r}"

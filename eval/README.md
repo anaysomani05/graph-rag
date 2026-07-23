@@ -75,6 +75,54 @@ tokens/call). A handful of papers cause either model to loop/over-generate regar
 token ceiling — not fixable by raising max_tokens further; shortening the input excerpt
 sometimes helps (worked for Debate-on-Graph specifically).
 
+## Day 3: reranker + grounded synthesis (2026-07-22)
+
+**Reranker (F5).** Off-the-shelf `cross-encoder/ms-marco-MiniLM-L-6-v2` reranks hybrid
+retrieval's top-20 candidates. First version regressed q1/q2 recall from 1.0 to 0.5 —
+plain pointwise reranking has no notion of "this chunk is redundant with one I already
+ranked highly from the same paper," so it let one paper's chunks fill all 5 top slots,
+pushing the second paper a multi-hop question needs out entirely. Fixed with a
+`max_per_paper=2` cap in `CrossEncoderReranker.rerank` (excess same-paper chunks are
+deprioritized to the tail, not dropped). After the fix: **precision@5 52.5% vs hybrid's
+35% / flat's 50%, recall@5 68.75% vs hybrid's 50% / flat's 43.75%** — a clean win on both
+axes over both baselines, reproducible across repeated runs.
+
+**Reproducibility bug found and fixed along the way:** `neighbor_chunk_ids` returned a
+Python `set`, and set iteration order is randomized per-process (`PYTHONHASHSEED`) —
+running the identical eval script twice in separate processes gave different aggregate
+numbers (56.25% vs 50.00% recall) because which candidates survived truncation to
+`max_expansions_per_seed` depended on hash order, not relevance. Fixed by returning a
+sorted list. Worth remembering: any function whose output gets sliced/truncated
+downstream needs a deterministic order, not just "correct contents."
+
+**Grounded synthesis (F6).** Real LLM synthesis (Groq) over the reranked top-5, broken
+into discrete claims each citing specific chunk ids — replaces the earlier placeholder
+"first sentence of the top chunk." Two grounding layers: (1) by construction, the model
+can only cite source numbers that map to chunks that were actually retrieved; (2) by
+content check, `_lexical_overlap` in `synthesis.py` drops any claim whose text doesn't
+actually overlap with its cited source's content. (2) exists because (1) alone doesn't
+verify the cited chunk's *content* supports the claim — caught in practice: the model
+restated a fact given directly in the question text itself (needs no retrieval) and
+cited an unrelated real chunk for it. A real chunk id being cited doesn't mean the
+citation is honest.
+
+**Paper-title attribution mattered more than expected.** Source excerpts handed to the
+synthesizer initially carried no paper attribution, just raw chunk text — body chunks
+deep in a paper often don't repeat the paper's own title, so the model could describe a
+fact correctly but could only call it "source 5," never naming the actual system. Once
+each source was prefixed with its paper's title (`grounded_hybrid.py` joins `chunks` to
+`papers` for this), end-to-end accuracy (LLM-judged against gold answers) jumped from
+12.5% to **37.5%** with no other change. Lesson: what the synthesizer can *say* is
+bounded by what's literally in front of it — anonymized excerpts silently cap answer
+quality even when retrieval and grounding are both working correctly.
+
+**Latency: real gap against the <5s target.** The full pipeline (hybrid retrieval →
+rerank → LLM synthesis) averages ~11.5s per question, driven by the Groq synthesis call.
+This is a genuine, unresolved gap against the project's stated p95 < 5s success metric —
+noted here rather than hidden. Candidate fixes not yet attempted: fewer synthesis-input
+chunks, a faster model for synthesis specifically (reranking already uses a separate
+lightweight cross-encoder), or overlapping retrieval/rerank latency with model warm-up.
+
 ## Scoring granularity
 
 `precision_at_k`/`recall_at_k` (`src/graphrag/eval/scoring.py`) score at the **paper**

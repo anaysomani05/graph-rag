@@ -91,7 +91,7 @@ def _entity_degrees(conn: psycopg.Connection, entity_ids: set[str]) -> dict[str,
 
 def neighbor_chunk_ids(
     conn: psycopg.Connection, chunk_id: str, hops: int = 1, max_entity_degree: int = 8
-) -> set[str]:
+) -> list[str]:
     """Chunk ids reachable within `hops` graph hops from any entity mentioned in
     `chunk_id`, via the edges those entities participate in (as source or target).
 
@@ -101,6 +101,14 @@ def neighbor_chunk_ids(
     unrelated papers — flood the neighbor set with noise instead of finding the
     specific paper a multi-hop question actually needs; see eval/README.md notes
     on hub-entity degree from the first extraction run (RAG: 80 edges, LLM: 30).
+
+    Returns a sorted list, not a set: callers (HybridRetrieval) slice this to the
+    first `max_expansions_per_seed` items, and Python's set iteration order is
+    randomized per-process (PYTHONHASHSEED) — an unsorted set here made which
+    candidates survived truncation, and therefore eval scores, vary between runs
+    of the exact same code with no data change. There's no intrinsic relevance
+    ranking among discrete graph neighbors (unlike the embedding-similarity-sorted
+    subtopic bridge), so alphabetical order is an arbitrary but fixed tie-break.
     """
     seed_entities: set[str] = set(
         row[0]
@@ -136,7 +144,7 @@ def neighbor_chunk_ids(
         frontier = next_frontier
 
     if not seen_entities:
-        return set()
+        return []
 
     rows = conn.execute(
         """
@@ -145,7 +153,7 @@ def neighbor_chunk_ids(
         """,
         (list(seen_entities), list(seen_entities)),
     ).fetchall()
-    return {r[0] for r in rows} - {chunk_id}
+    return sorted({r[0] for r in rows} - {chunk_id})
 
 
 def subtopic_bridge_chunk_ids(
