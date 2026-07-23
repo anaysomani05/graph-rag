@@ -139,12 +139,75 @@ each source was prefixed with its paper's title (`grounded_hybrid.py` joins `chu
 bounded by what's literally in front of it — anonymized excerpts silently cap answer
 quality even when retrieval and grounding are both working correctly.
 
-**Latency: real gap against the <5s target.** The full pipeline (hybrid retrieval →
-rerank → LLM synthesis) averages ~11.5s per question, driven by the Groq synthesis call.
-This is a genuine, unresolved gap against the project's stated p95 < 5s success metric —
-noted here rather than hidden. Candidate fixes not yet attempted: fewer synthesis-input
-chunks, a faster model for synthesis specifically (reranking already uses a separate
-lightweight cross-encoder), or overlapping retrieval/rerank latency with model warm-up.
+**Latency: initial ~11.5s reading was a measurement artifact, corrected on Day 4.**
+Originally reported as a real gap against the <5s target. Root cause: each ad-hoc test
+script launched a fresh Python process, paying sentence-transformer + cross-encoder
+model-load cost (several seconds) on every single query, and that cost got misattributed
+to "synthesis latency." Running the same system inside one long-lived process across all
+16 questions (as `scripts/run_eval.py` and a real server both do) gives **903ms/question**
+for the grounded pipeline — comfortably under the target. Lesson: always benchmark
+latency in a warm process that matches real deployment, not a fresh script per call.
+
+## Day 4: LangGraph orchestration + API (2026-07-23)
+
+**F3 orchestration.** `src/graphrag/orchestration/graph.py` is a real LangGraph
+`StateGraph` (planner → retriever → synthesizer → verifier), deliberately linear (no
+retry/loop edges) per the build plan — the point of using LangGraph even for a
+single-pass pipeline is that a real iterative verify/retry loop later is an incremental
+conditional edge, not a rewrite of the hand-rolled function-call chain that
+`systems/grounded_hybrid.py` is.
+
+- **Planner** decomposes the question into 1-2 additional search queries, so a question
+  mixing two sub-topics into one embedding gives hybrid retrieval more/better seeds.
+- **Retriever** runs hybrid retrieval for the original question and every sub-question,
+  merges candidates, reranks the merged set against the *original* question (verified
+  deterministic across repeated calls — sub-question generation itself was checked for
+  the Groq non-determinism seen elsewhere in this project and found stable here).
+- **Synthesizer** reuses the existing grounded synthesis unchanged.
+- **Verifier** — found a real gap while testing this manually: an out-of-corpus question
+  ("what's the capital of France...") still returned *some* top-k chunks (cosine
+  similarity always ranks something highest) and the synthesizer built a plausible but
+  off-topic answer from them, with citations that passed the lexical-overlap check
+  (they were verbatim restatements of the wrong chunks). The overlap check alone verifies
+  claim-matches-source, not source-relevant-to-question. Fix: `CrossEncoderReranker`
+  now also exposes raw scores (`rerank_with_scores`), and the retriever gates on the top
+  reranked score — empirically, genuinely relevant pairs on this corpus score roughly
+  +2 to +4, irrelevant ones -6 to -11, so a threshold of -2.0 cleanly separates them.
+  Below it, retrieval returns no candidates and the verifier reports "insufficient
+  evidence" honestly instead of a confabulated answer.
+- **Cold-start flakiness found and fixed:** the very first inference call through a
+  freshly-loaded cross-encoder in a new process scored differently than every
+  subsequent identical call (4/4 repeats in the same warm process were consistent).
+  Server startup now runs one throwaway query to absorb that variance before real
+  traffic arrives (see `api/main.py`'s lifespan).
+
+**F8 API.** `src/graphrag/api/main.py` — single `POST /query` (question in, grounded
+answer + citations + retrieved chunk ids + latency out) plus `GET /health`, backed by
+the orchestrated pipeline, eagerly initialized (with warm-up) at server startup rather
+than on first request. Verified with real `curl` requests against a running server, not
+just in-process calls.
+
+**Result on the full 16-question set** (all 5 systems, same run):
+
+```
+system                    n   accuracy  precision@k  recall@k  latency(ms)
+flat_baseline            16     18.75%      67.50%     65.62%       131.6
+hybrid                   16     18.75%      47.50%     65.62%       152.5
+hybrid_reranked          16      6.25%      57.50%     78.12%       310.6
+hybrid_reranked_grounded 16     37.50%      57.50%     78.12%       903.3
+langgraph_orchestrated   16     31.25%      55.00%     75.00%      2702.3
+```
+
+Honest reading: the orchestrated pipeline does **not** beat the simpler grounded system
+on this eval set (31.25% vs 37.5% accuracy, slightly lower precision/recall too) — the
+relevance gate correctly declines to answer on some borderline cases where the simpler
+system still ventures a guess that the judge happens to credit as correct. That's a real
+accuracy-vs-honesty tradeoff, not a bug: the gate exists specifically to stop confident
+wrong answers on evidence that doesn't actually support them, and it's doing that job.
+Latency is higher too (2.7s vs 0.9s) from the extra planner call and per-sub-question
+retrieval — still under the 5s target, but the added machinery has a real cost that
+isn't paid back in accuracy on this particular question set. Worth remembering before
+assuming "more pipeline stages" is automatically better.
 
 ## Scoring granularity
 

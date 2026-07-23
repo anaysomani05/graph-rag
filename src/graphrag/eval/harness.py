@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Protocol
 
@@ -30,9 +31,17 @@ def run_system(
     questions: list[LabeledQuestion],
     judge: AnswerJudge,
     k: int = 5,
+    delay_s: float = 0.0,
 ) -> SystemReport:
+    """delay_s: pause between questions. Systems and judges that call an LLM (the
+    orchestrated pipeline now calls Groq twice per question — planner + synthesis —
+    on top of the judge's own grading call) can burst past Groq's free-tier
+    tokens-per-minute limit with no pacing at all between questions; 0 is fine for
+    systems/judges with no LLM calls."""
     scores: list[QuestionScore] = []
-    for q in questions:
+    for i, q in enumerate(questions):
+        if i > 0 and delay_s > 0:
+            time.sleep(delay_s)
         result: PredictionResult = system.answer(q.question)
         precision = precision_at_k(result.retrieved_chunk_ids, q.gold_chunk_ids, k)
         recall = recall_at_k(result.retrieved_chunk_ids, q.gold_chunk_ids, k)
@@ -66,8 +75,9 @@ def compare_systems(
     questions: list[LabeledQuestion],
     judge: AnswerJudge,
     k: int = 5,
+    delay_s: float = 0.0,
 ) -> list[SystemReport]:
-    return [run_system(system, questions, judge, k) for system in systems]
+    return [run_system(system, questions, judge, k, delay_s=delay_s) for system in systems]
 
 
 def print_comparison(reports: list[SystemReport]) -> None:

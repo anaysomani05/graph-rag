@@ -50,10 +50,28 @@ class CrossEncoderReranker:
     def rerank(self, question: str, candidates: list[tuple[str, str]]) -> list[str]:
         """candidates: list of (chunk_id, text). Returns chunk_ids ranked best-first,
         with same-paper chunks beyond max_per_paper deprioritized to the tail."""
+        return [chunk_id for chunk_id, _score in self.rerank_with_scores(question, candidates)]
+
+    def rerank_with_scores(
+        self, question: str, candidates: list[tuple[str, str]]
+    ) -> list[tuple[str, float]]:
+        """Same as rerank, but also returns each chunk's raw cross-encoder score.
+
+        Scores are unbounded logits, not probabilities — empirically on this corpus,
+        genuinely relevant (question, chunk) pairs score roughly +2 to +4, while
+        irrelevant pairs (e.g. an out-of-corpus question) score around -6 to -11.
+        This is what makes relevance gating possible (see
+        orchestration/graph.py's verifier): a reranker that only returns ids can't
+        distinguish "best of a bad lot" from "genuinely relevant," so a query with no
+        real answer in the corpus would still get top-5 candidates handed to
+        synthesis with no signal that they're actually irrelevant.
+        """
         if not candidates:
             return []
         pairs = [(question, text) for _, text in candidates]
         scores = self.model.predict(pairs)
         ranked = sorted(zip(candidates, scores), key=lambda item: -item[1])
+        score_by_id = {chunk_id: float(score) for (chunk_id, _text), score in ranked}
         ranked_chunk_ids = [chunk_id for (chunk_id, _text), _score in ranked]
-        return apply_diversity_cap(ranked_chunk_ids, self.max_per_paper)
+        capped_ids = apply_diversity_cap(ranked_chunk_ids, self.max_per_paper)
+        return [(chunk_id, score_by_id[chunk_id]) for chunk_id in capped_ids]
