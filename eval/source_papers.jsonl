@@ -6,3 +6,19 @@
 {"arxiv_id": "2607.17715v1", "title": "C2KV: Compressed and Composable KV Cache Reuse for Efficient LLM Inference"}
 {"arxiv_id": "2607.17266v1", "title": "Debate-on-Graph: Reliable and Adaptive Reasoning of Large Language Model on Uncertain Knowledge Graph"}
 {"arxiv_id": "2607.17538v1", "title": "D-NOVA: In-Storage Retrieval Accelerator via Dual-Bound 3D NAND-Optimized Similarity Search with Vector Adaptation"}
+{"arxiv_id": "2606.26449v1", "title": "ProvenAI: Provenance-Native Traces of Evidence in Generated Answers"}
+{"arxiv_id": "2607.03447v1", "title": "TRIAGE: Trustworthy Retrieval Instrumentation And Graph Evaluation"}
+{"arxiv_id": "2606.27786v1", "title": "SHIFT: Gate-Modulated Activation Steering for Knowledge Conflict Mitigation in Retrieval-Augmented Generation"}
+{"arxiv_id": "2606.30518v1", "title": "Regime-Aware Peer Specialization for Robust RAG under Heterogeneous Knowledge Conflicts"}
+{"arxiv_id": "2606.31033v1", "title": "CORTEX: Token-Level Hallucination Detection in RAG via Comparative Internal Representations"}
+{"arxiv_id": "2607.04223v1", "title": "Detecting Hallucinations in Retrieval-Augmented Generation through Grounding-Aware Sensitivity by Perturbation (GASP)"}
+{"arxiv_id": "2606.26807v1", "title": "KARLA: Knowledge-base Augmented Retrieval for Language Models"}
+{"arxiv_id": "2606.26511v1", "title": "Temporal Validity in Retrieval Memory: Eliminating Stale-Fact Errors for AI Agents over Evolving Knowledge"}
+{"arxiv_id": "2607.11683v1", "title": "RAGU: A Multi-Step GraphRAG Engine with a Compact Domain-Adapted LLM"}
+{"arxiv_id": "2607.11464v1", "title": "FAIR GraphRAG: A Retrieval-Augmented Generation Approach for Semantic Data Analysis"}
+{"arxiv_id": "2606.30093v1", "title": "Efficient Retrieval-Augmented Generation via Token Co-occurrence Graphs"}
+{"arxiv_id": "2607.06507v1", "title": "DynaKRAG: A Unified Framework for Learnable Evidence Control in Multi-Hop Retrieval-Augmented Generation"}
+{"arxiv_id": "2607.11933v1", "title": "Transforming LLMs into Efficient Cross-Encoders via Knowledge Distillation for RAG Reranking"}
+{"arxiv_id": "2607.11400v1", "title": "Cross-Architecture LLM Ensembles, Feature-Based Reranking and Retrieval-Augmented Prompting for Legal Information Processing"}
+{"arxiv_id": "2606.29959v1", "title": "Know Before You Fetch: Calibrated Retrieval-Budget Allocation for Retrieval-Augmented Generation"}
+{"arxiv_id": "2607.00725v1", "title": "What Survives Into Context: A Diagnostic for Budget-Constrained Multi-Hop RAG and When Submodular Evidence Packing Improves It"}

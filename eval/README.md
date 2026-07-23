@@ -20,13 +20,36 @@ will look like a bug in the retriever when it's actually a labeling/id-mismatch 
 
 ## Current status
 
-8 questions, all two-hop, all grounded in real abstracts pulled from arXiv cs.CL
-(retrieval / RAG subfield) on 2026-07-21 — no fabricated facts, every gold answer traces
-to specific sentences in the two cited abstracts.
+**16 questions** (grown from 8 on 2026-07-22, closing out the Day 3 plan item), all
+two-hop, all grounded in real abstracts pulled from arXiv cs.CL (retrieval / RAG
+subfield) — no fabricated facts, every gold answer traces to specific sentences in the
+two cited abstracts. q9-q16 span 14 additional corpus papers not used by q1-q8 (dataset
+staleness/knowledge conflicts, hallucination detection, GraphRAG construction, reranking,
+retrieval-budget allocation — see `source_papers.jsonl` for the full list), so the set
+now covers more of the corpus's actual thematic diversity instead of repeatedly
+re-pairing the same 8 papers.
 
-Per the build plan: grow this to 15-20 by the end of Phase 0 / start of Weekend 1, then
-to 25-30 during Weekend 2 Day 3, once full-text chunks (not just abstracts) exist to
-write richer, deeper-than-abstract multi-hop questions against.
+Full-corpus result on all 16 questions (see scripts/run_eval.py):
+
+```
+system                  n    accuracy   precision@k    recall@k   latency(ms)
+flat_baseline           16     18.75%        67.50%      65.62%          89.3
+hybrid                  16     18.75%        47.50%      65.62%         102.4
+hybrid_reranked         16      6.25%        57.50%      78.12%         277.7
+hybrid_reranked_grounded 16    37.50%        57.50%      78.12%       13100.1
+```
+
+This confirms the Day 2/3 findings hold on a larger, more diverse sample, not just the
+original 8 hand-picked pairs: hybrid+rerank's recall (78.12%) clearly beats flat baseline
+(65.62%), and the full grounded pipeline's end-to-end accuracy (37.5%) matches what was
+seen on the smaller 8-question set almost exactly — a good sign the number isn't an
+artifact of a small sample. Precision on this larger set is actually lower for the hybrid
+systems than flat (57.5% vs 67.5%) even though it was higher on the original 8 — recall
+is the metric this project is actually about (did retrieval find the needed evidence at
+all), and that one is unambiguously better across both sample sizes.
+
+Per the build plan: grow further to 25-30 once there's time; 16 was chosen as a
+pragmatic stopping point inside the 15-20 target range for this build session.
 
 **Revised 2026-07-22 (Day 2):** the original v1 of these questions named both papers'
 systems explicitly in the question text (e.g. "Between D-NOVA's hardware accelerator and
