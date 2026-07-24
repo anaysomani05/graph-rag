@@ -1,14 +1,3 @@
----
-title: GraphRAG Research Assistant
-emoji: 🕸️
-colorFrom: blue
-colorTo: purple
-sdk: gradio
-sdk_version: 6.20.0
-app_file: app.py
-pinned: false
----
-
 # GraphRAG Research Assistant
 
 Plain vector search struggles with questions whose answer is spread across two different
