@@ -56,11 +56,11 @@ def answer_question(question: str) -> tuple[str, str]:
         return "", ""
     result = _get_pipeline().answer(question)
     if not result.citations:
-        return result.answer, "_(no citations — see answer above)_"
+        return result.predicted_answer, "_(no citations — see answer above)_"
     citations_md = "\n".join(
         f"{i}. {c.claim}\n   `{', '.join(c.chunk_ids)}`" for i, c in enumerate(result.citations, 1)
     )
-    return result.answer, citations_md
+    return result.predicted_answer, citations_md
 
 
 EXAMPLE_QUESTIONS = [
