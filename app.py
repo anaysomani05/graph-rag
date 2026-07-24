@@ -7,6 +7,15 @@ orchestration code, not a separate implementation.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# The Space installs from requirements.txt (plain package list), not "pip install
+# -e .", so `graphrag` isn't registered as an installed package there — add its
+# source directory to the path directly instead. Harmless when it IS installed
+# (Docker/local dev via pyproject.toml): Python just finds the same source first.
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
 import gradio as gr
 
 from graphrag.orchestration.graph import GraphRAGPipeline

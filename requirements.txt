@@ -1,1 +1,25 @@
--e .
+# Mirrors pyproject.toml's [project.dependencies] — kept as a separate flat list,
+# not "-e .", because the Hugging Face Space build installs from requirements.txt
+# in an early Docker layer, before the rest of the repo (including pyproject.toml)
+# is copied in. "-e ." failed there with "does not appear to be a Python project"
+# since pyproject.toml genuinely isn't present yet at that build stage. Keep this
+# file in sync with pyproject.toml by hand when dependencies change.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.8
+pydantic-settings>=2.4
+python-dotenv>=1.0
+psycopg[binary]>=3.2
+pgvector>=0.3
+sqlalchemy>=2.0
+sentence-transformers>=3.0
+arxiv>=2.1
+langgraph>=0.2
+openai>=1.40
+groq>=0.11
+numpy>=1.26
+tenacity>=9.0
+pymupdf>=1.24
+aiohttp>=3.10
+gradio>=5.0
+torch<=2.11.0
