@@ -17,7 +17,9 @@ real corpus of ~90 arXiv papers and measures — with a hand-labeled eval set, n
 whether it actually beats flat RAG at answering questions that require combining facts
 from two different papers.
 
-**Live demo:** _(placeholder — filled in after deployment)_
+**Live demo:** https://huggingface.co/spaces/anaysomani05/graph-rag (Gradio UI, backed
+by Neon Postgres + pgvector and Groq — the first query after an idle period is slow while
+the Space wakes and loads models)
 
 ## Results
 
