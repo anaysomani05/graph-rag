@@ -15,14 +15,14 @@ from graphrag.systems.reranker import CrossEncoderReranker
 from graphrag.systems.synthesis import SourceCandidate, synthesize_answer
 
 _PLANNER_PROMPT = """This question may require combining evidence from more than one \
-document to answer fully. Produce 1-2 additional focused search queries — different \
-phrasings or sub-aspects of the question — that together with the original question would \
+document to answer fully. Produce 1 additional focused search query — a different \
+phrasing or sub-aspect of the question — that together with the original question would \
 help surface all the evidence needed. Do not just repeat the original question.
 
 Question: {question}
 
-Respond with ONLY a JSON array of strings, e.g. ["query one", "query two"]. If the \
-question is already narrow enough that no additional queries would help, respond with []."""
+Respond with ONLY a JSON array of strings, e.g. ["query one"]. If the question is \
+already narrow enough that no additional query would help, respond with []."""
 
 _NO_EVIDENCE_ANSWER = (
     "I don't have enough grounded evidence in the retrieved sources to answer this "
@@ -77,7 +77,17 @@ class GraphRAGPipeline:
         rerank_top_n: int = 20,
         synthesis_top_n: int = 5,
         min_relevance_score: float = -2.0,
+        max_sub_questions: int = 1,
     ):
+        # Each sub-question means one more full HybridRetrieval.answer() call, and
+        # each of those is several sequential DB round trips (vector search + a
+        # graph-hop/subtopic-bridge lookup per seed). Fine on localhost; against a
+        # network-latency-bound managed DB (Neon), cutting this from 2 to 1
+        # sub-question took the pipeline from ~20s to ~8.5s just by itself, on top
+        # of batching the per-seed graph queries (see graph/store.py). Increase
+        # only once retrieval is made properly concurrent (separate connections
+        # per query) — see eval/README.md's Day 5 latency notes.
+        self.max_sub_questions = max_sub_questions
         self.hybrid = hybrid or HybridRetrieval()
         self.reranker = reranker or CrossEncoderReranker()
         self.min_relevance_score = min_relevance_score
@@ -115,7 +125,7 @@ class GraphRAGPipeline:
                     line for line in content.splitlines() if not line.strip().startswith("```")
                 )
             sub_questions, _ = json.JSONDecoder().raw_decode(content.strip())
-            sub_questions = [str(q) for q in sub_questions][:2]
+            sub_questions = [str(q) for q in sub_questions][: self.max_sub_questions]
         except Exception as e:
             print(f"WARN: planner call failed, proceeding with no sub-questions: {e}")
             sub_questions = []

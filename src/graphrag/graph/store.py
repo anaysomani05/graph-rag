@@ -102,58 +102,68 @@ def neighbor_chunk_ids(
     specific paper a multi-hop question actually needs; see eval/README.md notes
     on hub-entity degree from the first extraction run (RAG: 80 edges, LLM: 30).
 
-    Returns a sorted list, not a set: callers (HybridRetrieval) slice this to the
-    first `max_expansions_per_seed` items, and Python's set iteration order is
-    randomized per-process (PYTHONHASHSEED) — an unsorted set here made which
-    candidates survived truncation, and therefore eval scores, vary between runs
-    of the exact same code with no data change. There's no intrinsic relevance
-    ranking among discrete graph neighbors (unlike the embedding-similarity-sorted
-    subtopic bridge), so alphabetical order is an arbitrary but fixed tie-break.
+    Returns a sorted list, not a set: there's no intrinsic relevance ranking among
+    discrete graph neighbors (unlike the embedding-similarity-sorted subtopic
+    bridge), so alphabetical order is an arbitrary but fixed tie-break — needed
+    because callers slice this and Python's set iteration order is randomized
+    per-process (PYTHONHASHSEED), which made eval scores vary between runs of the
+    exact same code with no data change (see Day 3 notes in eval/README.md).
+
+    Implemented as a single query (one round trip), not the original hop-by-hop
+    Python loop (5+ sequential round trips per call). That was fine on localhost
+    but became the dominant cost once the DB moved to a network-latency-bound
+    managed host (Neon): ~230-900ms per round trip meant one HybridRetrieval call
+    (3 seeds x ~8 round trips each) took 6-7 seconds. Only hops=1 is supported by
+    this single-query form (the only value ever used in this codebase); a deeper
+    multi-hop traversal would need a recursive CTE.
     """
-    seed_entities: set[str] = set(
-        row[0]
-        for row in conn.execute(
-            """
-            SELECT DISTINCT source_entity_id FROM edges WHERE source_chunk_id = %s
-            UNION
-            SELECT DISTINCT target_entity_id FROM edges WHERE source_chunk_id = %s
-            """,
-            (chunk_id, chunk_id),
-        ).fetchall()
-    )
-
-    seed_degrees = _entity_degrees(conn, seed_entities)
-    frontier = {e for e in seed_entities if seed_degrees.get(e, 0) <= max_entity_degree}
-    seen_entities = set(frontier)
-
-    for _ in range(hops):
-        if not frontier:
-            break
-        rows = conn.execute(
-            """
-            SELECT DISTINCT target_entity_id FROM edges WHERE source_entity_id = ANY(%s)
-            UNION
-            SELECT DISTINCT source_entity_id FROM edges WHERE target_entity_id = ANY(%s)
-            """,
-            (list(frontier), list(frontier)),
-        ).fetchall()
-        candidates = {r[0] for r in rows} - seen_entities
-        candidate_degrees = _entity_degrees(conn, candidates)
-        next_frontier = {e for e in candidates if candidate_degrees.get(e, 0) <= max_entity_degree}
-        seen_entities |= next_frontier
-        frontier = next_frontier
-
-    if not seen_entities:
-        return []
+    if hops != 1:
+        raise NotImplementedError("neighbor_chunk_ids only supports hops=1 (see docstring)")
 
     rows = conn.execute(
         """
+        WITH seed_entities AS (
+            SELECT DISTINCT source_entity_id AS entity_id FROM edges WHERE source_chunk_id = %(chunk_id)s
+            UNION
+            SELECT DISTINCT target_entity_id AS entity_id FROM edges WHERE source_chunk_id = %(chunk_id)s
+        ),
+        entity_degrees AS (
+            SELECT entity_id, count(*) AS degree FROM (
+                SELECT source_entity_id AS entity_id FROM edges
+                UNION ALL
+                SELECT target_entity_id AS entity_id FROM edges
+            ) t
+            GROUP BY entity_id
+        ),
+        seed_filtered AS (
+            SELECT se.entity_id FROM seed_entities se
+            JOIN entity_degrees ed ON ed.entity_id = se.entity_id
+            WHERE ed.degree <= %(max_degree)s
+        ),
+        frontier_filtered AS (
+            SELECT DISTINCT f.entity_id FROM (
+                SELECT target_entity_id AS entity_id FROM edges
+                WHERE source_entity_id IN (SELECT entity_id FROM seed_filtered)
+                UNION
+                SELECT source_entity_id AS entity_id FROM edges
+                WHERE target_entity_id IN (SELECT entity_id FROM seed_filtered)
+            ) f
+            JOIN entity_degrees ed ON ed.entity_id = f.entity_id
+            WHERE ed.degree <= %(max_degree)s
+        ),
+        all_entities AS (
+            SELECT entity_id FROM seed_filtered
+            UNION
+            SELECT entity_id FROM frontier_filtered
+        )
         SELECT DISTINCT source_chunk_id FROM edges
-        WHERE source_entity_id = ANY(%s) OR target_entity_id = ANY(%s)
+        WHERE (source_entity_id IN (SELECT entity_id FROM all_entities)
+            OR target_entity_id IN (SELECT entity_id FROM all_entities))
+        AND source_chunk_id != %(chunk_id)s
         """,
-        (list(seen_entities), list(seen_entities)),
+        {"chunk_id": chunk_id, "max_degree": max_entity_degree},
     ).fetchall()
-    return sorted({r[0] for r in rows} - {chunk_id})
+    return sorted(r[0] for r in rows)
 
 
 def subtopic_bridge_chunk_ids(
@@ -178,34 +188,52 @@ def subtopic_bridge_chunk_ids(
     This is the looser, embedding-similarity counterpart that exists specifically to
     catch that case — the actual mechanism multi-hop questions about thematically
     related but textually dissimilar papers depend on.
-    """
-    own_subtopics = conn.execute(
-        """
-        SELECT en.embedding FROM edges e
-        JOIN entities en ON en.entity_id = e.target_entity_id
-        WHERE e.source_chunk_id = %s AND e.relation = %s AND en.embedding IS NOT NULL
-        """,
-        (chunk_id, relation),
-    ).fetchall()
 
-    best_similarity: dict[str, float] = {}
-    for (embedding,) in own_subtopics:
-        rows = conn.execute(
-            """
-            SELECT e.source_chunk_id, 1 - (en.embedding <=> %s) AS similarity
+    Implemented as one query with a LATERAL join (one round trip total, regardless
+    of how many subtopic entities the seed chunk has — typically 2-3), not a Python
+    loop issuing one query per subtopic. Same motivation as neighbor_chunk_ids: fine
+    on localhost, but each subtopic's separate round trip became real cost once the
+    DB moved to a network-latency-bound managed host.
+
+    ORDER BY breaks ties on chunk_id explicitly: entity dedup means several papers
+    can share the exact same deduped subtopic entity (genuine similarity=1.0 ties,
+    not a rounding artifact), and Postgres doesn't guarantee a stable row order
+    among ties under LIMIT — different query shapes returned different arbitrary
+    members of the same tied group for the same data. Same class of determinism
+    bug as neighbor_chunk_ids' set-ordering issue (see that function's docstring
+    and Day 3 notes in eval/README.md): don't let ties or hash order silently
+    change eval results run to run.
+    """
+    rows = conn.execute(
+        """
+        WITH own_subtopics AS (
+            SELECT en.embedding FROM edges e
+            JOIN entities en ON en.entity_id = e.target_entity_id
+            WHERE e.source_chunk_id = %(chunk_id)s AND e.relation = %(relation)s
+                AND en.embedding IS NOT NULL
+        )
+        SELECT matched.source_chunk_id, MAX(matched.similarity) AS similarity
+        FROM own_subtopics os
+        CROSS JOIN LATERAL (
+            SELECT e.source_chunk_id, 1 - (en.embedding <=> os.embedding) AS similarity
             FROM edges e
             JOIN entities en ON en.entity_id = e.target_entity_id
-            WHERE e.relation = %s AND e.source_chunk_id != %s AND en.embedding IS NOT NULL
-            ORDER BY en.embedding <=> %s
-            LIMIT %s
-            """,
-            (embedding, relation, chunk_id, embedding, top_n_per_subtopic),
-        ).fetchall()
-        for bridged_chunk_id, similarity in rows:
-            if similarity >= similarity_threshold:
-                best_similarity[bridged_chunk_id] = max(
-                    similarity, best_similarity.get(bridged_chunk_id, 0.0)
-                )
-
-    ranked = sorted(best_similarity.items(), key=lambda kv: -kv[1])
-    return [chunk_id for chunk_id, _ in ranked[:max_results]]
+            WHERE e.relation = %(relation)s AND e.source_chunk_id != %(chunk_id)s
+                AND en.embedding IS NOT NULL
+            ORDER BY en.embedding <=> os.embedding, e.source_chunk_id
+            LIMIT %(top_n_per_subtopic)s
+        ) matched
+        WHERE matched.similarity >= %(similarity_threshold)s
+        GROUP BY matched.source_chunk_id
+        ORDER BY similarity DESC, matched.source_chunk_id
+        LIMIT %(max_results)s
+        """,
+        {
+            "chunk_id": chunk_id,
+            "relation": relation,
+            "top_n_per_subtopic": top_n_per_subtopic,
+            "similarity_threshold": similarity_threshold,
+            "max_results": max_results,
+        },
+    ).fetchall()
+    return [source_chunk_id for source_chunk_id, _similarity in rows]
