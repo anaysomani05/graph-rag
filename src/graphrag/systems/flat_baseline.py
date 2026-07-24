@@ -22,7 +22,8 @@ class FlatVectorBaseline:
     name = "flat_baseline"
 
     def __init__(self, model_name: str = settings.embedding_model, top_k: int = 20):
-        self.model = SentenceTransformer(model_name)
+        # device="cpu": see hybrid_retrieval.py's HybridRetrieval.__init__ for why.
+        self.model = SentenceTransformer(model_name, device="cpu")
         self.conn = get_connection()
         self.top_k = top_k
 

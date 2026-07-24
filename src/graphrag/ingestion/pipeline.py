@@ -26,7 +26,7 @@ def run_ingestion(target_size: int = 90) -> None:
     pdf_paths = asyncio.run(download_pdfs(papers))
     print(f"Downloaded {len(pdf_paths)}/{len(papers)} PDFs.")
 
-    model = SentenceTransformer(settings.embedding_model)
+    model = SentenceTransformer(settings.embedding_model, device="cpu")
     conn = get_connection()
     create_schema(conn)
 

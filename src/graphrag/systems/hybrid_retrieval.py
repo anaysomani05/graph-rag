@@ -56,7 +56,13 @@ class HybridRetrieval:
         final_k: int = 20,
         max_expansions_per_seed: int = 3,
     ):
-        self.model = SentenceTransformer(model_name)
+        # device="cpu" explicit: these are small CPU-friendly models and we never
+        # need GPU acceleration. On Hugging Face's ZeroGPU hardware, leaving device
+        # unset lets torch auto-detect a nominally-present CUDA device and try to
+        # use it outside a @spaces.GPU-decorated call, which their CUDA emulation
+        # layer blocks with "Low-level CUDA init reached" — forcing CPU sidesteps
+        # that entirely, and is what we want on every other host too.
+        self.model = SentenceTransformer(model_name, device="cpu")
         self.conn = get_connection()
         self.seed_k = seed_k
         self.hops = hops

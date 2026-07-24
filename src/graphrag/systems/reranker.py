@@ -44,7 +44,9 @@ class CrossEncoderReranker:
     """
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", max_per_paper: int = 2):
-        self.model = CrossEncoder(model_name)
+        # device="cpu": see hybrid_retrieval.py's HybridRetrieval.__init__ for why
+        # this is forced explicitly rather than left to torch's auto-detection.
+        self.model = CrossEncoder(model_name, device="cpu")
         self.max_per_paper = max_per_paper
 
     def rerank(self, question: str, candidates: list[tuple[str, str]]) -> list[str]:

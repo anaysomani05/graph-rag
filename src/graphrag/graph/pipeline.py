@@ -51,7 +51,7 @@ def run_extraction(politeness_delay_s: float = 18.0, arxiv_ids: list[str] | None
     print(f"Extracting entities/relations from {len(papers)} papers (abstract + body excerpt)...")
 
     client = Groq(api_key=settings.groq_api_key)
-    embedding_model = SentenceTransformer(settings.embedding_model)
+    embedding_model = SentenceTransformer(settings.embedding_model, device="cpu")
     deduper = EntityDeduper(embedding_model)
 
     existing = conn.execute("SELECT entity_id, embedding FROM entities WHERE embedding IS NOT NULL").fetchall()
