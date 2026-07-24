@@ -38,10 +38,44 @@ class ChunkRecord:
     embedding: np.ndarray
 
 
-def get_connection() -> psycopg.Connection:
-    conn = psycopg.connect(settings.database_url, autocommit=True)
-    register_vector(conn)
-    return conn
+class ReconnectingConnection:
+    """A thin wrapper over a psycopg connection that transparently reopens itself
+    when the underlying connection has been closed.
+
+    The app holds one long-lived connection per system for the life of the process.
+    Neon's free tier suspends the database after a few minutes of inactivity, which
+    drops that connection server-side — so the first query after any idle period was
+    failing with `OperationalError: the connection is closed` until the whole app
+    restarted. This wrapper detects a dead/closed connection and reconnects, so an
+    idle-then-resumed demo just works. Only `.execute()` and `.cursor()` are used on
+    connections anywhere in this codebase, so those are all it needs to proxy.
+    """
+
+    def __init__(self, dsn: str):
+        self._dsn = dsn
+        self._conn: psycopg.Connection | None = None
+
+    def _ensure(self) -> psycopg.Connection:
+        if self._conn is None or self._conn.closed:
+            self._conn = psycopg.connect(self._dsn, autocommit=True)
+            register_vector(self._conn)
+        return self._conn
+
+    def execute(self, *args, **kwargs):
+        try:
+            return self._ensure().execute(*args, **kwargs)
+        except psycopg.OperationalError:
+            # Connection died between calls (e.g. Neon suspended) — drop it and
+            # retry once against a fresh one.
+            self._conn = None
+            return self._ensure().execute(*args, **kwargs)
+
+    def cursor(self, *args, **kwargs):
+        return self._ensure().cursor(*args, **kwargs)
+
+
+def get_connection() -> ReconnectingConnection:
+    return ReconnectingConnection(settings.database_url)
 
 
 def create_schema(conn: psycopg.Connection) -> None:
