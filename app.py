@@ -20,6 +20,22 @@ import gradio as gr
 
 from graphrag.orchestration.graph import GraphRAGPipeline
 
+try:
+    import spaces  # only importable/meaningful inside a Hugging Face Space
+except ImportError:
+    spaces = None
+
+if spaces is not None:
+    # ZeroGPU hardware refuses to start an app with zero @spaces.GPU-decorated
+    # functions ("No @spaces.GPU function detected during startup") — CPU Basic
+    # is the tier we'd actually want, but it's locked behind a paid plan on this
+    # account, and ZeroGPU is the only free option. This function is never called
+    # (our models run on CPU); it exists purely to satisfy that startup check.
+    @spaces.GPU
+    def _unused_gpu_placeholder() -> None:
+        pass
+
+
 pipeline: GraphRAGPipeline | None = None
 
 
