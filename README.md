@@ -27,11 +27,17 @@ vector search find both papers by lexical match alone — see "What I got wrong"
 
 | System | Accuracy | Precision@5 | Recall@5 | Latency |
 |---|---|---|---|---|
-| Flat vector baseline | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER |
-| + Graph-hybrid retrieval | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER |
-| + Cross-encoder reranking | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER |
-| + Grounded synthesis & citations | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER |
-| + LangGraph orchestration | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER |
+| Flat vector baseline | 18.75% | 67.50% | 65.62% | 164ms |
+| + Graph-hybrid retrieval | 18.75% | 47.50% | 65.62% | 101ms |
+| + Cross-encoder reranking | 6.25% | 57.50% | **78.12%** | 304ms |
+| + Grounded synthesis & citations | **37.50%** | 57.50% | **78.12%** | 1.4s |
+| + LangGraph orchestration | 31.25% | 55.00% | 75.00% | 2.5s |
+
+(Latency measured in a warm, long-running process — see "What I got wrong" below for why
+that distinction matters. LangGraph orchestration's higher latency and slightly lower
+accuracy than the simpler grounded pipeline is a real, honest tradeoff — its relevance
+gate correctly declines to answer on some borderline cases the simpler system guesses
+right on; see `eval/README.md`'s Day 4 notes.)
 
 **Recall is the metric this project is actually about** — did retrieval find the
 evidence a multi-hop question needs at all. Graph-hybrid retrieval measurably beats flat
