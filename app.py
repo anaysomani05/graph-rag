@@ -100,4 +100,4 @@ with gr.Blocks(title="GraphRAG Research Assistant") as demo:
     question_box.submit(fn=answer_question, inputs=question_box, outputs=[answer_box, citations_box])
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(show_error=True)
