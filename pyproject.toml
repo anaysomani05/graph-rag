@@ -22,6 +22,12 @@ dependencies = [
     "pymupdf>=1.24",
     "aiohttp>=3.10",
     "gradio>=5.0",
+    # Hugging Face's ZeroGPU build environment force-installs torch<=2.11.0
+    # alongside our requirements.txt; pinning here avoids a pip resolver conflict
+    # against sentence-transformers' unpinned torch dependency (which otherwise
+    # pulls the latest 2.13.x). Not needed for local/Docker deployment, but
+    # harmless there too.
+    "torch<=2.11.0",
 ]
 
 [project.optional-dependencies]
